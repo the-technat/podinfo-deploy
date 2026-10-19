@@ -1,0 +1,72 @@
+configs:
+  params:
+    server.insecure: true
+global:
+  domain: argo.k8s.orb.local
+server:
+  ingress:
+    enabled: true
+
+# Values for argo-helm/argo-cd: GitHub notifications for the PR preview apps.
+#
+#   helm upgrade --install argocd argo/argo-cd -n argocd -f argocd-values.yaml \
+#     --set-file notifications.secret.items.github-privateKey=./app.private-key.pem
+#
+# --set-file reads the .pem verbatim (multi-line) and stores it as the Secret
+# key `github-privateKey`. Pass it on EVERY upgrade: a release rendered without
+# it will drop the key from the Secret again.
+#
+# The ApplicationSet must put these annotations on the generated Applications
+# (spec.template.metadata.annotations):
+#   preview-url: 'http://pr-{{ .number }}.k8s.orb.local'
+#   notifications.argoproj.io/subscribe.on-pr-preview-deployed.github: ""
+notifications:
+  enabled: true
+
+  # Dashboard URL, available as {{.context.argocdUrl}} in the templates below.
+  argocdUrl: https://argocd.k8s.orb.local # <-- your Argo CD URL
+
+  # The chart creates `argocd-notifications-secret`, which the controller reads
+  # (this is the default; stated here so it's explicit). The GitHub App private
+  # key must not be written into this file, so it is injected at upgrade time
+  # with --set-file (see the command at the top). Only the key name is fixed:
+  # it has to be `github-privateKey`, matching `$github-privateKey` below.
+  secret:
+    create: true
+
+  # ConfigMap key `service.github`
+  notifiers:
+    service.github: |
+      appID: ""5380986                  # <-- GitHub App ID
+      installationID: "173027031"        # <-- installation ID of the App
+      privateKey: $github-privateKey   # key `github-privateKey` in the Secret
+
+  # ConfigMap keys `template.*`
+  templates:
+    template.pr-preview-deployed: |
+      message: Preview {{.app.metadata.name}} deployed
+      github:
+        repoURLPath: "{{.app.spec.source.repoURL}}"
+        revisionPath: "{{.app.status.operationState.syncResult.revision}}"
+        pullRequestComment:
+          # Same tag => the existing comment is updated instead of duplicated.
+          commentTag: "argocd/{{.app.metadata.name}}"
+          content: |
+            ## Preview deployed
+            **URL:** {{ index .app.metadata.annotations "preview-url" }}
+            **Argo CD:** {{.context.argocdUrl}}/applications/{{.app.metadata.namespace}}/{{.app.metadata.name}}
+        deployment:
+          state: success
+          environment: "{{.app.metadata.name}}"      # e.g. podinfo-pr-42
+          environmentURL: '{{ index .app.metadata.annotations "preview-url" }}'
+          logURL: "{{.context.argocdUrl}}/applications/{{.app.metadata.namespace}}/{{.app.metadata.name}}?operation=true"
+          requiredContexts: []
+          autoMerge: false
+          transientEnvironment: true
+
+  # ConfigMap keys `trigger.*`
+  triggers:
+    trigger.on-pr-preview-deployed: |
+      - when: app.status.operationState.phase in ['Succeeded'] and app.status.health.status == 'Healthy'
+        oncePer: app.status.operationState.syncResult.revision
+        send: [pr-preview-deployed]

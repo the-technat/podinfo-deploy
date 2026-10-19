@@ -13,13 +13,18 @@ spec:
     - pullRequest:
         github:
           owner: the-technat
-          repo: podinfo-deploy # <-- repository whose PRs trigger previews
-          # Token used to call the GitHub API (lists open PRs).
-          # Create it with:
-          #   kubectl -n argocd create secret generic github-token --from-literal=token=<PAT>
-          tokenRef:
-            secretName: github-token
-            key: token
+          repo: podinfo-deploy
+          # Authenticate as a GitHub App instead of a PAT (lists open PRs).
+          # The Secret holds the App credentials in Argo CD's repo-creds format:
+          #   kubectl -n argocd create secret generic github-app-repo-creds \
+          #     --from-literal=type=git \
+          #     --from-literal=url=https://github.com/the-technat \
+          #     --from-literal=githubAppID=<app-id> \
+          #     --from-literal=githubAppInstallationID=<installation-id> \
+          #     --from-file=githubAppPrivateKey=./app.private-key.pem
+          #   kubectl -n argocd label secret github-app-repo-creds \
+          #     argocd.argoproj.io/secret-type=repo-creds
+          appSecretName: github-app-repo-creds
           # Optional: only create previews for PRs carrying this label.
           # labels:
           #   - preview
@@ -41,27 +46,27 @@ spec:
     spec:
       project: default
       source:
-        repoURL: https://stefanprodan.github.io/podinfo
-        chart: podinfo
-        targetRevision: 6.* # latest 6.x; pin an exact version for reproducibility
+        repoURL: https://github.com/the-technat/podinfo-deploy.git
+        targetRevision: "{{ .head_sha }}" # exact commit of the PR
+        path: charts/podinfo-umbrella
         helm:
           releaseName: "podinfo-pr-{{ .number }}"
+          valueFiles:
+            - values-orbstack.yaml
+          # Per-PR overrides; they win over the value files.
           valuesObject:
-            ui:
-              # Shown as the main heading on the podinfo page.
-              # `title` is the PR title from GitHub; trunc keeps long titles tidy.
-              message: "PR #{{ .number }}: {{ .title | trunc 60 }}"
-              color: '{{ printf "#%s" (.head_short_sha | trunc 6) }}'
-            replicaCount: 1
-            # Uncomment if you have an ingress controller + wildcard DNS:
-            ingress:
-              enabled: true
-              #   className: nginx
-              hosts:
-                - host: "pr-{{ .number }}.k8s.orb.local"
-                  paths:
-                    - path: /
-                      pathType: ImplementationSpecific
+            podinfo:
+              ui:
+                # `title` is the PR title from GitHub; trunc keeps it tidy.
+                message: "PR #{{ .number }}: {{ .title | trunc 60 }}"
+              ingress:
+                # Own host per PR, otherwise every preview would claim the
+                # host from values-orbstack.yaml. Lists replace, not merge, in Helm.
+                hosts:
+                  - host: "pr-{{ .number }}.k8s.orb.local"
+                    paths:
+                      - path: /
+                        pathType: ImplementationSpecific
       destination:
         server: https://kubernetes.default.svc
         namespace: "preview-pr-{{ .number }}"
