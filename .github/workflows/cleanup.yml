@@ -1,0 +1,78 @@
+# Cleans up the GitHub deployments / environment that Argo CD Notifications
+# created for a PR preview (environment name = Argo CD app name, e.g. podinfo-pr-42)
+# once the PR is closed or merged.
+#
+# Place it at .github/workflows/cleanup-preview-environment.yaml on the branch
+# your PRs target. `pull_request_target` always runs the workflow file from the
+# BASE branch of the PR, so a copy only on a feature branch has no effect.
+name: Cleanup preview environment
+
+on:
+  # pull_request_target (not pull_request) so the token can write even for PRs
+  # from forks. That is safe here because this workflow never checks out or runs
+  # anything from the PR; the only PR-controlled value it uses is the PR number.
+  pull_request_target:
+    types: [closed]
+
+  # Manual run, e.g. to clean up previews of PRs that were closed before this
+  # workflow existed.
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number whose preview environment should be removed
+        required: true
+        type: string
+
+# Least privilege: deployments are the only thing the default token touches.
+permissions:
+  deployments: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+    steps:
+      - name: Work out the environment name
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[0-9]+$ ]] || { echo "::error::Invalid PR number: '$PR_NUMBER'"; exit 1; }
+          # Must match `environment:` in the notification template (argocd/values.yaml),
+          # which is the Argo CD Application name from the ApplicationSet.
+          echo "ENVIRONMENT=podinfo-pr-${PR_NUMBER}" >> "$GITHUB_ENV"
+
+      - name: Deactivate and delete the deployments
+        run: |
+          set -euo pipefail
+          ids=$(gh api --paginate "repos/${REPO}/deployments?environment=${ENVIRONMENT}&per_page=100" --jq '.[].id')
+          if [ -z "$ids" ]; then
+            echo "No deployments found for environment ${ENVIRONMENT}, nothing to do."
+            exit 0
+          fi
+          for id in $ids; do
+            echo "Deployment ${id}: marking inactive, then deleting"
+            # A deployment can only be deleted once it is inactive (unless it is
+            # the repository's only one), so deactivate it first.
+            gh api -X POST "repos/${REPO}/deployments/${id}/statuses" \
+              -f state=inactive -f description="Pull request #${PR_NUMBER} closed" > /dev/null
+            gh api -X DELETE "repos/${REPO}/deployments/${id}"
+          done
+
+      - name: Delete the environment itself (optional)
+        env:
+          # Deleting an environment needs "Administration: write", which the
+          # built-in GITHUB_TOKEN cannot be granted. Create a fine-grained token
+          # limited to this repository and store it as this secret. Without it,
+          # this step is skipped and the (now empty) environment stays listed.
+          ADMIN_TOKEN: ${{ secrets.ENVIRONMENT_ADMIN_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ADMIN_TOKEN:-}" ]; then
+            echo "::notice::Secret ENVIRONMENT_ADMIN_TOKEN is not set; deployments were removed but the environment '${ENVIRONMENT}' was kept."
+            exit 0
+          fi
+          GH_TOKEN="$ADMIN_TOKEN" gh api -X DELETE "repos/${REPO}/environments/${ENVIRONMENT}" \
+            && echo "Deleted environment ${ENVIRONMENT}" \
+            || echo "::warning::Could not delete environment ${ENVIRONMENT} (already gone, or token lacks Administration: write)."
