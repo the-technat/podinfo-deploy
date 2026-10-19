@@ -27,7 +27,7 @@ notifications:
   # Dashboard URL, available as {{.context.argocdUrl}} in the templates below.
   # Matches `kubectl port-forward svc/argocd-server 8080:443` (see README), so
   # the links in PR comments only work while that port-forward is running.
-  argocdUrl: https://localhost:8080
+  argocdUrl: https://argo.k8s.orb.local
 
   # The chart creates `argocd-notifications-secret`, which the controller reads
   # (this is the default; stated here so it's explicit). The GitHub App private

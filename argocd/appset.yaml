@@ -65,6 +65,7 @@ spec:
           # Per-PR overrides; they win over the value files.
           valuesObject:
             podinfo:
+              replicaCount: 1
               ui:
                 # `title` is the PR title from GitHub; trunc keeps it tidy.
                 message: "PR #{{ .number }}: {{ .title | trunc 60 }}"
