@@ -12,8 +12,8 @@ spec:
   generators:
     - pullRequest:
         github:
-          owner: YOUR_ORG            # <-- GitHub user or org
-          repo: YOUR_REPO            # <-- repository whose PRs trigger previews
+          owner: the-technat
+          repo: podinfo-deploy # <-- repository whose PRs trigger previews
           # Token used to call the GitHub API (lists open PRs).
           # Create it with:
           #   kubectl -n argocd create secret generic github-token --from-literal=token=<PAT>
@@ -30,10 +30,10 @@ spec:
   template:
     metadata:
       # One Application per PR: podinfo-pr-42, podinfo-pr-43, ...
-      name: 'podinfo-pr-{{ .number }}'
+      name: "podinfo-pr-{{ .number }}"
       labels:
         app.kubernetes.io/part-of: pr-previews
-        pr-number: '{{ .number }}'
+        pr-number: "{{ .number }}"
       # Makes Argo CD delete the deployed resources when the Application
       # itself is deleted (which happens when the PR is closed/merged).
       finalizers:
@@ -43,14 +43,14 @@ spec:
       source:
         repoURL: https://stefanprodan.github.io/podinfo
         chart: podinfo
-        targetRevision: 6.*          # latest 6.x; pin an exact version for reproducibility
+        targetRevision: 6.* # latest 6.x; pin an exact version for reproducibility
         helm:
-          releaseName: 'podinfo-pr-{{ .number }}'
+          releaseName: "podinfo-pr-{{ .number }}"
           valuesObject:
             ui:
               # Shown as the main heading on the podinfo page.
               # `title` is the PR title from GitHub; trunc keeps long titles tidy.
-              message: 'PR #{{ .number }}: {{ .title | trunc 60 }}'
+              message: "PR #{{ .number }}: {{ .title | trunc 60 }}"
               color: '{{ printf "#%s" (.head_short_sha | trunc 6) }}'
             replicaCount: 1
             # Uncomment if you have an ingress controller + wildcard DNS:
@@ -64,7 +64,7 @@ spec:
             #           pathType: ImplementationSpecific
       destination:
         server: https://kubernetes.default.svc
-        namespace: 'preview-pr-{{ .number }}'
+        namespace: "preview-pr-{{ .number }}"
       syncPolicy:
         automated:
           prune: true
