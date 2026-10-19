@@ -1,8 +1,11 @@
+# Orbstack related values:
 configs:
   params:
     server.insecure: true
+
 global:
   domain: argo.k8s.orb.local
+
 server:
   ingress:
     enabled: true
@@ -16,15 +19,15 @@ server:
 # key `github-privateKey`. Pass it on EVERY upgrade: a release rendered without
 # it will drop the key from the Secret again.
 #
-# The ApplicationSet must put these annotations on the generated Applications
-# (spec.template.metadata.annotations):
-#   preview-url: 'http://pr-{{ .number }}.k8s.orb.local'
-#   notifications.argoproj.io/subscribe.on-pr-preview-deployed.github: ""
+# The generated Applications opt in via annotations set in
+# argocd/applicationset.yaml (`preview-url` and the `subscribe` annotation).
 notifications:
   enabled: true
 
   # Dashboard URL, available as {{.context.argocdUrl}} in the templates below.
-  argocdUrl: https://argocd.k8s.orb.local # <-- your Argo CD URL
+  # Matches `kubectl port-forward svc/argocd-server 8080:443` (see README), so
+  # the links in PR comments only work while that port-forward is running.
+  argocdUrl: https://localhost:8080
 
   # The chart creates `argocd-notifications-secret`, which the controller reads
   # (this is the default; stated here so it's explicit). The GitHub App private
@@ -37,7 +40,7 @@ notifications:
   # ConfigMap key `service.github`
   notifiers:
     service.github: |
-      appID: ""5380986                  # <-- GitHub App ID
+      appID: "5380986"                  # <-- GitHub App ID
       installationID: "173027031"        # <-- installation ID of the App
       privateKey: $github-privateKey   # key `github-privateKey` in the Secret
 

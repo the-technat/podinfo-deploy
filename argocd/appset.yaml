@@ -35,10 +35,19 @@ spec:
   template:
     metadata:
       # One Application per PR: podinfo-pr-42, podinfo-pr-43, ...
-      name: "podinfo-pr-{{ .number }}"
+      name: 'podinfo-pr-{{ .number }}'
       labels:
         app.kubernetes.io/part-of: pr-previews
-        pr-number: "{{ .number }}"
+        pr-number: '{{ .number }}'
+      annotations:
+        # Read by the notification template (argocd/argocd-values.yaml) for the
+        # URL in the PR comment and the GitHub environment link.
+        preview-url: 'http://pr-{{ .number }}.k8s.orb.local'
+        # Opts this app in to the GitHub notification trigger. The value stays
+        # empty because the github service has no per-app recipient.
+        notifications.argoproj.io/subscribe.on-pr-preview-deployed.github: ""
+        # Shows the preview as a clickable link on the app in the Argo CD UI.
+        link.argocd.argoproj.io/external-link: 'http://pr-{{ .number }}.k8s.orb.local'
       # Makes Argo CD delete the deployed resources when the Application
       # itself is deleted (which happens when the PR is closed/merged).
       finalizers:
@@ -47,10 +56,10 @@ spec:
       project: default
       source:
         repoURL: https://github.com/the-technat/podinfo-deploy.git
-        targetRevision: "{{ .head_sha }}" # exact commit of the PR
+        targetRevision: '{{ .head_sha }}'     # exact commit of the PR
         path: charts/podinfo-umbrella
         helm:
-          releaseName: "podinfo-pr-{{ .number }}"
+          releaseName: 'podinfo-pr-{{ .number }}'
           valueFiles:
             - values-orbstack.yaml
           # Per-PR overrides; they win over the value files.
@@ -58,18 +67,18 @@ spec:
             podinfo:
               ui:
                 # `title` is the PR title from GitHub; trunc keeps it tidy.
-                message: "PR #{{ .number }}: {{ .title | trunc 60 }}"
+                message: 'PR #{{ .number }}: {{ .title | trunc 60 }}'
               ingress:
                 # Own host per PR, otherwise every preview would claim the
                 # host from values-orbstack.yaml. Lists replace, not merge, in Helm.
                 hosts:
-                  - host: "pr-{{ .number }}.k8s.orb.local"
+                  - host: 'pr-{{ .number }}.k8s.orb.local'
                     paths:
                       - path: /
                         pathType: ImplementationSpecific
       destination:
         server: https://kubernetes.default.svc
-        namespace: "preview-pr-{{ .number }}"
+        namespace: 'preview-pr-{{ .number }}'
       syncPolicy:
         automated:
           prune: true
