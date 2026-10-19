@@ -54,14 +54,14 @@ spec:
               color: '{{ printf "#%s" (.head_short_sha | trunc 6) }}'
             replicaCount: 1
             # Uncomment if you have an ingress controller + wildcard DNS:
-            # ingress:
-            #   enabled: true
-            #   className: nginx
-            #   hosts:
-            #     - host: 'pr-{{ .number }}.preview.example.com'
-            #       paths:
-            #         - path: /
-            #           pathType: ImplementationSpecific
+            ingress:
+              enabled: true
+              #   className: nginx
+              hosts:
+                - host: "pr-{{ .number }}.k8s.orb.local"
+                  paths:
+                    - path: /
+                      pathType: ImplementationSpecific
       destination:
         server: https://kubernetes.default.svc
         namespace: "preview-pr-{{ .number }}"
