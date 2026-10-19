@@ -4,7 +4,7 @@
 # `podinfo:` key, because Helm routes values to a dependency by its name.
 # (A key at the root of this file would only reach the umbrella chart itself.)
 podinfo:
-  replicaCount: 1
+  replicaCount: 3
 
   ui:
     message: "Hello from the podinfo umbrella chart"
