@@ -12,10 +12,10 @@ podinfo:
 
   resources:
     requests:
-      cpu: 10m
+      cpu: 50m
       memory: 32Mi
     limits:
-      memory: 64Mi
+      memory: 100Mi
 
   # Ingress is off by default; environment files (values-*.yaml) turn it on.
   ingress:
