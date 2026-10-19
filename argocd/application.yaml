@@ -6,12 +6,12 @@ metadata:
   name: podinfo
   namespace: argocd
   finalizers:
-    - resources-finalizer.argocd.argoproj.io   # delete workloads with the Application
+    - resources-finalizer.argocd.argoproj.io # delete workloads with the Application
 spec:
   project: default
   source:
-    repoURL: https://github.com/YOUR_ORG/podinfo-umbrella.git   # <-- your repo URL
-    targetRevision: main
+    repoURL: https://github.com/the-technat/podinfo-deploy.git # <-- your repo URL
+    targetRevision: develop
     path: charts/podinfo-umbrella
     helm:
       # values.yaml is always applied implicitly; this layers the env file on top.
