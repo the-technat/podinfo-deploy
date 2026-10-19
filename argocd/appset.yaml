@@ -26,8 +26,8 @@ spec:
           #     argocd.argoproj.io/secret-type=repo-creds
           appSecretName: github-app-repo-creds
           # Optional: only create previews for PRs carrying this label.
-          # labels:
-          #   - preview
+          labels:
+            - preview
         # Poll interval. Default is 30 min, which feels broken for previews.
         # Keep >= 30s to stay inside GitHub's API rate limit, or use a webhook.
         requeueAfterSeconds: 60

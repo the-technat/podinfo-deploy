@@ -2,8 +2,7 @@
 # created for a PR preview (environment name = Argo CD app name, e.g. podinfo-pr-42)
 # once the PR is closed or merged.
 #
-# Place it at .github/workflows/cleanup-preview-environment.yaml on the branch
-# your PRs target. `pull_request_target` always runs the workflow file from the
+# `pull_request_target` always runs the workflow file from the
 # BASE branch of the PR, so a copy only on a feature branch has no effect.
 name: Cleanup preview environment
 

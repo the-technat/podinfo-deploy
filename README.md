@@ -3,18 +3,23 @@
 A GitOps demo: [podinfo](https://github.com/stefanprodan/podinfo) deployed with Argo CD
 through an **umbrella Helm chart**, plus a **preview environment for every open pull
 request**. Argo CD reports each preview back to the PR as a comment and as a GitHub
-environment.
+environment, and a GitHub Actions workflow removes that environment again when the PR is
+closed.
 
 What you end up with:
 
-| What | Where |
-|---|---|
-| The main deployment | `http://podinfo.k8s.orb.local` |
-| One preview per open PR | `http://pr-<number>.k8s.orb.local` |
-| Per PR, on GitHub | a comment with the preview link, and an entry under **Environments** |
+| What                                   | Where                                                                |
+| -------------------------------------- | -------------------------------------------------------------------- |
+| The main deployment (branch `develop`) | `https://podinfo.k8s.orb.local`                                      |
+| One preview per open PR                | `https://pr-<number>.k8s.orb.local`                                  |
+| Argo CD UI                             | `https://argo.k8s.orb.local`                                         |
+| Per PR, on GitHub                      | a comment with the preview link, and an entry under **Environments** |
 
 It targets a local [OrbStack](https://orbstack.dev) Kubernetes cluster. Other clusters work
 too, but then the `*.k8s.orb.local` hostnames and the ingress step need adapting.
+
+This repo uses `develop` as its main branch (there is no `main`): the main deployment tracks
+it and PRs are opened against it.
 
 ## How the pieces fit together
 
@@ -33,54 +38,76 @@ too, but then the `*.k8s.orb.local` hostnames and the ingress step need adapting
                                           | (4) sync succeeded and app is healthy
                                           v
  Notifications controller --(5)--> GitHub App --> PR comment + Deployment (environment)
+
+ PR closed / merged
+          |
+          |-- (6a) PR disappears from the generator: Application and workloads are deleted
+          '-- (6b) workflow .github/workflows/cleanup.yml: GitHub deployments (and,
+                   optionally, the environment) are deleted
 ```
 
-- **ApplicationSet** (`argocd/applicationset.yaml`): its Pull Request generator lists the
-  open PRs of this repo and renders one Argo CD Application per PR. When a PR closes, the
-  Application disappears from the list and is deleted, which tears the preview down.
+- **ApplicationSet** (`argocd/appset.yaml`): its Pull Request generator lists the open PRs of
+  this repo and renders one Argo CD Application per PR. When a PR closes, the Application
+  disappears from the list and is deleted, which tears the preview down. Previews run one
+  replica and get their own hostname and a UI colour derived from the commit SHA.
 - **Umbrella chart** (`charts/podinfo-umbrella`): wraps the upstream podinfo chart as a
   dependency. Values for podinfo live under a `podinfo:` key, because Helm routes values to
   a subchart by its name. `values.yaml` is the base, `values-orbstack.yaml` the overlay that
-  enables the ingress. Previews layer per-PR overrides (UI message, hostname) on top.
-- **Notifications** (`argocd/argocd-values.yaml`): the Argo CD Notifications controller
-  watches the Applications. When a preview becomes healthy it calls GitHub through the same
-  GitHub App.
+  enables the ingress. Previews layer per-PR overrides (replicas, UI message and colour,
+  hostname) on top.
+- **Notifications** (`argocd/values.yaml`): values for the argo-helm/argo-cd chart. The Argo CD
+  Notifications controller watches the Applications; when a preview becomes healthy it calls
+  GitHub through the same GitHub App.
+- **Cleanup workflow** (`.github/workflows/cleanup.yml`): Argo CD deletes the app when a PR
+  closes, but nothing tells GitHub the environment is gone. This workflow does.
 
 ## Repository layout
 
 ```
 .
+├── .github/workflows/
+│   └── cleanup.yml            # removes the PR's GitHub deployments/environment on close
 ├── argocd/
-│   ├── argocd-values.yaml     # values for the argo-helm/argo-cd chart (notifications)
-│   ├── application.yaml       # Application for the main deployment
-│   └── applicationset.yaml    # ApplicationSet generating the PR previews
-└── charts/podinfo-umbrella/
-    ├── Chart.yaml             # declares podinfo as a dependency (pinned)
-    ├── Chart.lock             # generated in step 1
-    ├── values.yaml            # base values
-    └── values-orbstack.yaml   # ingress on podinfo.k8s.orb.local
+│   ├── values.yaml            # values for the argo-helm/argo-cd chart (ingress, notifications)
+│   ├── application.yaml       # Application for the main deployment (tracks develop)
+│   └── appset.yaml            # ApplicationSet generating the PR previews
+├── charts/podinfo-umbrella/
+│   ├── Chart.yaml             # declares podinfo as a dependency (pinned)
+│   ├── values.yaml            # base values
+│   └── values-orbstack.yaml   # ingress on podinfo.k8s.orb.local
+└── .gitignore                 # keeps app.private-key.pem out of Git
 ```
 
 ## Prerequisites
 
 - OrbStack with Kubernetes enabled, and `kubectl config current-context` showing `orbstack`.
 - `kubectl`, `helm` (v3) and `git` installed.
-- Push access to `github.com/the-technat/podinfo-deploy`. A public repo is simplest. For a
-  private repo, see the notes in steps 2 and 5.
+- A GitHub repo you can push to, holding this content.
 
 ## Setup
 
-### 1. Push the repo
+### 1. Get the repo and adapt the hard-coded names
+
+Fork or copy this repo. A few files contain values specific to the original, so change them
+in your copy:
+
+| File                      | Change                                                                               |
+| ------------------------- | ------------------------------------------------------------------------------------ |
+| `argocd/application.yaml` | `repoURL`                                                                            |
+| `argocd/appset.yaml`      | `owner`, `repo` and `repoURL`                                                        |
+| `argocd/values.yaml`      | `appID` and `installationID` (from step 2), and `argocdUrl` if you change the domain |
+
+The default branch of your copy must match `targetRevision` in `argocd/application.yaml`
+(`develop`).
+
+Optionally commit a `Chart.lock`. It isn't in this repo: `Chart.yaml` pins podinfo to an exact
+version, so renders are stable without it. The lock additionally records an integrity digest:
 
 ```bash
-cd charts/podinfo-umbrella && helm dependency update && cd ../..   # writes Chart.lock
-git init -b main
-git add . && git commit -m "Initial commit"
-git remote add origin git@github.com:the-technat/podinfo-deploy.git
-git push -u origin main
+cd charts/podinfo-umbrella && helm dependency update    # writes Chart.lock + downloads charts/*.tgz
+git add Chart.lock                                      # commit the lock only, not the downloaded .tgz
 ```
 
-`Chart.lock` records the exact resolved podinfo dependency, so every render is reproducible.
 Check that the chart renders and the ingress is on:
 
 ```bash
@@ -97,26 +124,28 @@ controller comments with it, and (for a private repo) Argo CD clones with it.
    **New GitHub App**.
 2. Fill in the form:
    - **GitHub App name:** globally unique, max 34 characters, e.g. `technat-argocd-previews`.
-   - **Homepage URL:** required but arbitrary, e.g. `https://github.com/the-technat/podinfo-deploy`.
+   - **Homepage URL:** required but arbitrary, e.g. the URL of your repo.
    - **Webhook:** untick **Active**. Argo CD calls GitHub, never the other way round.
 3. **Repository permissions**, everything else stays at No access:
 
-   | Permission | Access | Used for |
-   |---|---|---|
-   | Pull requests | Read & write | list PRs (ApplicationSet), post the PR comment |
-   | Deployments | Read & write | create the GitHub Deployment / environment |
-   | Contents | Read-only | **private repos only**: let Argo CD clone the repo |
-   | Metadata | Read-only | added automatically |
+   | Permission    | Access       | Used for                                           |
+   | ------------- | ------------ | -------------------------------------------------- |
+   | Pull requests | Read & write | list PRs (ApplicationSet), post the PR comment     |
+   | Deployments   | Read & write | create the GitHub Deployment / environment         |
+   | Contents      | Read-only    | **private repos only**: let Argo CD clone the repo |
+   | Metadata      | Read-only    | added automatically                                |
 
 4. **Where can this GitHub App be installed?** Choose **Only on this account**, then
    **Create GitHub App**.
 5. On the App's settings page, note the **App ID**, and under **Private keys** click
-   **Generate a private key**. Save the downloaded file as `app.private-key.pem` in this
-   directory (`.gitignore` already excludes `*.pem`). GitHub keeps only the public half, so
-   this file is the only copy of the private key.
+   **Generate a private key**. Save the downloaded file as `app.private-key.pem` in the root of
+   your checkout. `.gitignore` excludes exactly that file name, so keep it. GitHub keeps only
+   the public half, so this file is the only copy of the private key.
 6. In the App's left sidebar click **Install App**, then **Install**. Choose **Only select
-   repositories** and pick `podinfo-deploy`. The page you land on has a URL ending in
+   repositories** and pick your repo. The page you land on has a URL ending in
    `/settings/installations/<installation-id>`; note that number.
+
+Put the App ID and installation ID into `argocd/values.yaml` (`notifiers` section).
 
 ### 3. Install an ingress controller
 
@@ -140,13 +169,14 @@ curl -si http://anything.k8s.orb.local | head -1     # expect HTTP/1.1 404 from 
 
 ### 4. Install Argo CD
 
-Open `argocd/argocd-values.yaml` and replace `appID` and `installationID` (under
-`notifiers`) with the values from step 2. Then:
+`argocd/values.yaml` runs the Argo CD server in plain-HTTP mode (`server.insecure`), exposes it
+through an ingress on `argo.k8s.orb.local` (`global.domain`), and configures the GitHub
+notifications. Install it, passing the private key on the command line:
 
 ```bash
 helm repo add argo https://argoproj.github.io/argo-helm && helm repo update
 helm upgrade --install argocd argo/argo-cd -n argocd --create-namespace \
-  -f argocd/argocd-values.yaml \
+  -f argocd/values.yaml \
   --set-file notifications.secret.items.github-privateKey=./app.private-key.pem
 kubectl -n argocd rollout status deploy/argocd-server
 ```
@@ -156,111 +186,156 @@ notifier config refers to its `github-privateKey` key. `--set-file` reads the `.
 verbatim (multi-line) so the key never lands in a values file. **Pass it on every
 `helm upgrade`**, otherwise the key is dropped from the Secret again.
 
-Open the UI:
+Open the UI at `https://argo.k8s.orb.local` and log in as `admin` with:
 
 ```bash
-kubectl -n argocd port-forward svc/argocd-server 8080:443 &
 kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d; echo
 ```
 
-Browse to `https://localhost:8080` (accept the self-signed certificate) and log in as
-`admin`. The port-forward must stay running for the links in PR comments to work, because
-`argocdUrl` in the values points there.
+If the ingress isn't reachable yet, `kubectl -n argocd port-forward svc/argocd-server 8080:443`
+works as a fallback (open `https://localhost:8080`).
 
 ### 5. Give Argo CD the GitHub App credentials
 
 The ApplicationSet authenticates through a Secret in Argo CD's repo-creds format
-(`appSecretName` in `argocd/applicationset.yaml`):
+(`appSecretName` in `argocd/appset.yaml`):
 
 ```bash
 kubectl -n argocd create secret generic github-app-repo-creds \
   --from-literal=type=git \
-  --from-literal=url=https://github.com/the-technat \
+  --from-literal=url=https://github.com/<your-user-or-org> \
   --from-literal=githubAppID=<app-id> \
   --from-literal=githubAppInstallationID=<installation-id> \
   --from-file=githubAppPrivateKey=./app.private-key.pem
 kubectl -n argocd label secret github-app-repo-creds argocd.argoproj.io/secret-type=repo-creds
 ```
 
-The label also makes it a credential template for every repo under
-`https://github.com/the-technat`. For a **private** repo this is what lets Argo CD clone it,
-which is why the App needs the Contents permission in that case.
+The label also makes it a credential template for every repo under that `url` prefix. For a
+**private** repo this is what lets Argo CD clone it, which is why the App needs the Contents
+permission in that case.
 
 ### 6. Deploy
 
 ```bash
-kubectl apply -f argocd/application.yaml        # main deployment
-kubectl apply -f argocd/applicationset.yaml     # PR previews
+kubectl apply -f argocd/application.yaml     # main deployment
+kubectl apply -f argocd/appset.yaml          # PR previews
 kubectl -n argocd get applications
-curl http://podinfo.k8s.orb.local               # JSON from podinfo
+curl https://podinfo.k8s.orb.local            # JSON from podinfo
 ```
 
 Until the first PR exists, only the `podinfo` Application is listed.
 
+### 7. Enable the cleanup workflow
+
+`.github/workflows/cleanup.yml` runs when a PR is closed. It lists the GitHub deployments of
+the environment `podinfo-pr-<number>`, marks each one inactive and deletes it. It needs no
+setup for that part: it uses the built-in `GITHUB_TOKEN` with only `deployments: write`.
+
+Two things to know:
+
+- **It must exist on the PR's base branch** (`develop` here). The workflow uses the
+  `pull_request_target` trigger, which always runs the workflow file from the base branch, so
+  a copy that only lives on a feature branch does nothing.
+- **Deleting the environment itself needs an extra token.** That requires the
+  "Administration: write" permission, which `GITHUB_TOKEN` cannot be granted. To enable it:
+  1. GitHub **Settings**, **Developer settings**, **Personal access tokens**, **Fine-grained
+     tokens**, **Generate new token**.
+  2. Repository access: **Only select repositories**, pick this repo. Permissions:
+     **Administration: Read and write**.
+  3. In the repo, **Settings**, **Secrets and variables**, **Actions**, **New repository
+     secret** named `ENVIRONMENT_ADMIN_TOKEN`.
+
+  Without the secret the workflow still removes the deployments and logs a notice; only the
+  empty environment entry stays under **Settings**, **Environments**.
+
 ## Try the demo
 
 ```bash
-git switch -c demo
+git switch -c demo develop
 # change something visible, e.g. podinfo.ui.message in charts/podinfo-umbrella/values.yaml
 git commit -am "Change greeting" && git push -u origin demo
-gh pr create --fill          # or open the PR in the GitHub UI
+gh pr create --fill --base develop          # or open the PR in the GitHub UI
 ```
 
 Within about a minute (the generator polls every 60s):
 
 1. `kubectl -n argocd get applications` lists `podinfo-pr-<number>`.
-2. `curl http://pr-<number>.k8s.orb.local` answers with the preview, and its UI message reads
-   `PR #<number>: <title>`.
+2. `curl https://pr-<number>.k8s.orb.local` answers with the preview: one replica, UI message
+   `PR #<number>: <title>`, and a colour derived from the commit SHA.
 3. The PR gets a **Preview deployed** comment, and the repo's **Environments** list
    (right sidebar of the repo's main page) shows `podinfo-pr-<number>`.
-4. Push another commit: the preview updates to the new commit and the same comment is
-   edited rather than duplicated.
-5. Close or merge the PR: the Application and its resources are removed.
+4. Push another commit: the preview updates to the new commit, the colour changes, and the
+   same comment is edited rather than duplicated.
+5. Close or merge the PR: the Application and its resources are removed, and the **Actions**
+   tab shows a "Cleanup preview environment" run that removes the GitHub deployment.
+
+## Security: who can trigger a preview?
+
+A preview deploys whatever chart is at the PR's head commit, with Argo CD's permissions, and
+the generator picks up **every** open PR. On a private repo with trusted collaborators that is
+fine. On a **public** repo anyone can open a PR whose chart contains arbitrary manifests, and
+Argo CD would apply them to your cluster.
+
+To make previews opt-in, uncomment the label filter in `argocd/appset.yaml`:
+
+```yaml
+labels:
+  - preview
+```
+
+Only users with triage or write access can add labels, so a preview then exists only for PRs a
+maintainer labelled `preview`. A dedicated Argo CD AppProject that limits previews to
+`preview-pr-*` namespaces is a sensible second layer, but it does not stop a malicious
+workload inside that namespace, so the label matters more.
 
 ## Troubleshooting
 
-| Symptom | Where to look |
-|---|---|
-| No Application appears for the PR | `kubectl -n argocd logs deploy/argocd-applicationset-controller`. Auth errors point at the `github-app-repo-creds` Secret or the App's Pull requests permission; also check `owner`/`repo` in `applicationset.yaml` and that the App is installed on this repo. |
-| Application exists but "authentication required" / "repository not found" | Private repo: add Contents (read) to the App, accept the changed permissions on the installation, and check the `url` prefix in the repo-creds Secret. |
-| Synced, but the hostname gives nginx 404 or no response | `kubectl get ingressclass` must show a default class; `kubectl -n preview-pr-<n> get ingress` shows the host. |
-| No PR comment or environment | `kubectl -n argocd logs deploy/argocd-notifications-controller`. A 403/404 from GitHub means missing Pull requests or Deployments write access, or the App isn't installed on the repo. |
-| Notifications log a key error | The Secret lacks `github-privateKey`: re-run the step 4 command including `--set-file`, then `kubectl -n argocd rollout restart deploy/argocd-notifications-controller`. |
-| App has no notification at all | `kubectl -n argocd get app podinfo-pr-<n> -o jsonpath='{.metadata.annotations}'` must contain the `notifications.argoproj.io/subscribe...` and `preview-url` annotations. |
-| Notified once, not again | Intended: the trigger fires once per revision (`oncePer`). Push a new commit to get a new notification. |
+| Symptom                                                                   | Where to look                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No Application appears for the PR                                         | `kubectl -n argocd logs deploy/argocd-applicationset-controller`. Auth errors point at the `github-app-repo-creds` Secret or the App's Pull requests permission; also check `owner`/`repo` in `argocd/appset.yaml`, that the App is installed on this repo, and, if you enabled the label filter, that the PR carries the label. |
+| Application exists but "authentication required" / "repository not found" | Private repo: add Contents (read) to the App, accept the changed permissions on the installation, and check the `url` prefix in the repo-creds Secret.                                                                                                                                                                           |
+| Synced, but the hostname gives nginx 404 or no response                   | `kubectl get ingressclass` must show a default class; `kubectl -n preview-pr-<n> get ingress` shows the host.                                                                                                                                                                                                                    |
+| No PR comment or environment                                              | `kubectl -n argocd logs deploy/argocd-notifications-controller`. A 403/404 from GitHub means missing Pull requests or Deployments write access, or the App isn't installed on the repo.                                                                                                                                          |
+| Notifications log a key error                                             | The Secret lacks `github-privateKey`: re-run the step 4 command including `--set-file`, then `kubectl -n argocd rollout restart deploy/argocd-notifications-controller`.                                                                                                                                                         |
+| App has no notification at all                                            | `kubectl -n argocd get app podinfo-pr-<n> -o jsonpath='{.metadata.annotations}'` must contain the `notifications.argoproj.io/subscribe...` and `preview-url` annotations.                                                                                                                                                        |
+| Notified once, not again                                                  | Intended: the trigger fires once per revision (`oncePer`). Push a new commit to get a new notification.                                                                                                                                                                                                                          |
+| Preview is missing its colour or fails to sync after the colour change    | The colour is a Go template inside the Helm values in `argocd/appset.yaml`. Look at the Application's error in the Argo CD UI, and at the generated Application (`kubectl -n argocd get app podinfo-pr-<n> -o yaml`) to see what was rendered.                                                                                   |
+| Deployments stay after a PR closes                                        | Open the **Actions** tab: was "Cleanup preview environment" triggered? It only runs if the workflow file exists on the PR's base branch. Run it by hand with `gh workflow run cleanup.yml -f pr_number=<n>`.                                                                                                                     |
+| Environment entry stays after cleanup                                     | Expected without the `ENVIRONMENT_ADMIN_TOKEN` secret (step 7), or if that token lacks Administration: write.                                                                                                                                                                                                                    |
 
 ## Clean up
 
 ```bash
-kubectl delete -f argocd/applicationset.yaml    # removes all previews
+kubectl delete -f argocd/appset.yaml          # removes all previews
 kubectl delete -f argocd/application.yaml
 helm uninstall argocd -n argocd
 helm uninstall ingress-nginx -n ingress-nginx
 ```
 
-Then, on GitHub, delete the left-over environments (repo **Settings**, **Environments**) and,
-if you like, the GitHub App (Settings, Developer settings, GitHub Apps).
+Then, on GitHub, delete any left-over environments (repo **Settings**, **Environments**) and, if
+you like, the GitHub App (Settings, Developer settings, GitHub Apps).
 
 ## Known limitations
 
-- **Environments are not removed when a PR closes.** Argo CD deletes the app, but nothing
-  tells GitHub the environment is gone. A workflow on `pull_request: closed` could delete it.
 - **Empty namespaces can remain.** Argo CD creates `preview-pr-<n>` through the
   `CreateNamespace` sync option but does not own it, so it typically stays after the app is
   deleted. `kubectl delete ns preview-pr-<n>` removes it.
-- **Local-only URLs.** `*.k8s.orb.local` and `localhost:8080` resolve only on your machine,
-  so teammates following the links in a PR comment won't reach them.
+- **Local-only URLs.** `*.k8s.orb.local` resolves only on your machine, so teammates following
+  the links in a PR comment won't reach them.
 - **PR titles end up in Helm values.** A title containing quotes or other special characters
   could break that preview's values. Test with such a title before relying on it.
 - **Polling.** New PRs appear after up to 60s. A GitHub webhook to the ApplicationSet
   controller makes it instant.
+- **No lock file.** `Chart.lock` isn't committed (see step 1).
 
 ## Changing things later
 
-| I want to... | Change... |
-|---|---|
-| Upgrade podinfo | `version` in `charts/podinfo-umbrella/Chart.yaml`, then `helm dependency update` and commit `Chart.lock` |
-| Change replicas, UI message, resources | `podinfo:` block in `charts/podinfo-umbrella/values.yaml` |
-| Change the main hostname / ingress | `charts/podinfo-umbrella/values-orbstack.yaml` |
-| Change the PR comment text | `templates` in `argocd/argocd-values.yaml`, then `helm upgrade` (with `--set-file`) |
-| Only preview labelled PRs | uncomment `labels` under the generator in `argocd/applicationset.yaml` |
+| I want to...                                                  | Change...                                                                                                             |
+| ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Upgrade podinfo                                               | `version` in `charts/podinfo-umbrella/Chart.yaml` (optionally refresh `Chart.lock`)                                   |
+| Change replicas, UI message, resources of the main deployment | `podinfo:` block in `charts/podinfo-umbrella/values.yaml`                                                             |
+| Change what only previews get (replicas, colour, hostname)    | `valuesObject` in `argocd/appset.yaml`                                                                                |
+| Change the main hostname / ingress                            | `charts/podinfo-umbrella/values-orbstack.yaml`                                                                        |
+| Change the PR comment text                                    | `templates` in `argocd/values.yaml`, then `helm upgrade` (with `--set-file`)                                          |
+| Only preview labelled PRs                                     | uncomment `labels` under the generator in `argocd/appset.yaml`                                                        |
+| Change how GitHub cleanup works                               | `.github/workflows/cleanup.yml` (the environment name must stay `podinfo-pr-<n>`, matching the notification template) |

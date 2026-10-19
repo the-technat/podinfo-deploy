@@ -1,1 +1,2 @@
-app.private-key.pem
+*.private-key.pem
+charts/*/charts/
