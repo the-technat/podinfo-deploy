@@ -1,0 +1,28 @@
+# Apply this once to the cluster (kubectl apply -f argocd/application.yaml).
+# From then on Argo CD keeps the cluster in sync with the Git repo.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: podinfo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io   # delete workloads with the Application
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/YOUR_ORG/podinfo-umbrella.git   # <-- your repo URL
+    targetRevision: main
+    path: charts/podinfo-umbrella
+    helm:
+      # values.yaml is always applied implicitly; this layers the env file on top.
+      valueFiles:
+        - values-orbstack.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: podinfo
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

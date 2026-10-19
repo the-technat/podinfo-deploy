@@ -1,0 +1,73 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: podinfo-pr-previews
+  namespace: argocd
+spec:
+  # Use Go templating ({{ .number }}) instead of the legacy {{number}} syntax.
+  # missingkey=error makes a typo in a variable name fail loudly.
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+
+  generators:
+    - pullRequest:
+        github:
+          owner: YOUR_ORG            # <-- GitHub user or org
+          repo: YOUR_REPO            # <-- repository whose PRs trigger previews
+          # Token used to call the GitHub API (lists open PRs).
+          # Create it with:
+          #   kubectl -n argocd create secret generic github-token --from-literal=token=<PAT>
+          tokenRef:
+            secretName: github-token
+            key: token
+          # Optional: only create previews for PRs carrying this label.
+          # labels:
+          #   - preview
+        # Poll interval. Default is 30 min, which feels broken for previews.
+        # Keep >= 30s to stay inside GitHub's API rate limit, or use a webhook.
+        requeueAfterSeconds: 60
+
+  template:
+    metadata:
+      # One Application per PR: podinfo-pr-42, podinfo-pr-43, ...
+      name: 'podinfo-pr-{{ .number }}'
+      labels:
+        app.kubernetes.io/part-of: pr-previews
+        pr-number: '{{ .number }}'
+      # Makes Argo CD delete the deployed resources when the Application
+      # itself is deleted (which happens when the PR is closed/merged).
+      finalizers:
+        - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: default
+      source:
+        repoURL: https://stefanprodan.github.io/podinfo
+        chart: podinfo
+        targetRevision: 6.*          # latest 6.x; pin an exact version for reproducibility
+        helm:
+          releaseName: 'podinfo-pr-{{ .number }}'
+          valuesObject:
+            ui:
+              # Shown as the main heading on the podinfo page.
+              # `title` is the PR title from GitHub; trunc keeps long titles tidy.
+              message: 'PR #{{ .number }}: {{ .title | trunc 60 }}'
+              color: '{{ printf "#%s" (.head_short_sha | trunc 6) }}'
+            replicaCount: 1
+            # Uncomment if you have an ingress controller + wildcard DNS:
+            # ingress:
+            #   enabled: true
+            #   className: nginx
+            #   hosts:
+            #     - host: 'pr-{{ .number }}.preview.example.com'
+            #       paths:
+            #         - path: /
+            #           pathType: ImplementationSpecific
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'preview-pr-{{ .number }}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true

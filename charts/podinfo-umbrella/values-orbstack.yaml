@@ -1,0 +1,12 @@
+# Environment overlay for the OrbStack cluster. Layered on top of values.yaml.
+podinfo:
+  ingress:
+    enabled: true
+    # Empty on purpose: no ingressClassName is rendered, so the cluster's
+    # DEFAULT IngressClass handles this Ingress. Set e.g. "nginx" to pin one.
+    className: ""
+    hosts:
+      - host: podinfo.k8s.orb.local
+        paths:
+          - path: /
+            pathType: ImplementationSpecific

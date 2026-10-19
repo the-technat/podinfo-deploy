@@ -1,0 +1,22 @@
+# Base values, valid for every environment.
+#
+# Everything meant for the podinfo subchart lives under the top-level
+# `podinfo:` key, because Helm routes values to a dependency by its name.
+# (A key at the root of this file would only reach the umbrella chart itself.)
+podinfo:
+  replicaCount: 1
+
+  ui:
+    message: "Hello from the podinfo umbrella chart"
+    color: "#34577c"
+
+  resources:
+    requests:
+      cpu: 10m
+      memory: 32Mi
+    limits:
+      memory: 64Mi
+
+  # Ingress is off by default; environment files (values-*.yaml) turn it on.
+  ingress:
+    enabled: false

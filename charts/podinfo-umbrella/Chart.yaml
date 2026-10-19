@@ -1,0 +1,17 @@
+apiVersion: v2
+name: podinfo-umbrella
+description: Umbrella chart that deploys stefanprodan/podinfo as a dependency
+type: application
+
+# Version of THIS chart (the wrapper). Bump when you change values or templates.
+version: 0.1.0
+
+# Informational only: the version of the app being deployed.
+appVersion: "6.15.0"
+
+dependencies:
+  - name: podinfo
+    # Exact pin => reproducible deploys. Upgrade by bumping this, running
+    # `helm dependency update`, and committing the new Chart.lock.
+    version: 6.15.0
+    repository: https://stefanprodan.github.io/podinfo
